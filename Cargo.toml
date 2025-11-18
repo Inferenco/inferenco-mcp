@@ -2,7 +2,7 @@
 name = "nova-mcp"
 version = "0.1.0"
 edition = "2021"
-description = "Nova MCP Server - DEX tools for Model Context Protocol"
+description = "Nova MCP Server - minimal tools using the official Rust SDK"
 authors = ["Nova Team"]
 license = "MIT"
 repository = "https://github.com/your-org/nova-mcp"
@@ -12,45 +12,9 @@ name = "nova-mcp-stdio"
 path = "src/main.rs"
 
 [dependencies]
-# Async runtime
-tokio = { version = "1.0", features = ["full"] }
-
-# Serialization
+rmcp = { version = "0.8.0", features = ["server", "transport-io"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-jsonschema = "0.17"
-
-# HTTP client for API calls
-reqwest = { version = "0.11", features = ["json", "blocking"] }
-urlencoding = "2.1"
-
-# HTTP server for JSON-RPC (optional HTTP transport)
-axum = { version = "0.7" }
-hyper = { version = "1" }
-
-# Error handling
-anyhow = "1.0"
-thiserror = "1.0"
-
-# Storage
-sled = "0.34"
-
-# Logging
+tokio = { version = "1.0", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-dotenvy = "0.15"
-
-# Date/time
-chrono = { version = "0.4", features = ["serde"] }
-
-# Configuration
-toml = "0.8"
-
-# Utilities (none)
-
-[dev-dependencies]
-tokio-test = "0.4"
-
-[features]
-default = ["stdio"]
-stdio = []
