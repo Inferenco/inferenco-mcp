@@ -265,7 +265,7 @@ async fn handle_sse(
                     "jsonrpc": "2.0",
                     "error": {
                         "code": -32000,
-                        "message": if params.get("token").is_some() { "Unauthorized" } else { "Authentication required" }
+                        "message": if params.contains_key("token") { "Unauthorized" } else { "Authentication required" }
                     }
                 }))
                 .unwrap();
