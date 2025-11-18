@@ -1,16 +1,17 @@
 use axum::body::Bytes;
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
-    response::Json,
-    routing::post,
+    response::{sse::Event, IntoResponse, Json, Sse},
+    routing::{get, post},
     Router,
 };
+use dotenvy::dotenv;
 use inferenco_mcp::server::ToolService;
 use rmcp::{transport::stdio, ServiceExt};
 use serde::{Deserialize, Serialize};
-use std::env;
-use std::sync::Arc;
+use std::{collections::HashMap, convert::Infallible, env, sync::Arc, time::Duration};
+use tokio_stream::{Stream, StreamExt as _};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Deserialize)]
@@ -220,6 +221,103 @@ async fn handle_rpc(
     Ok(Json(response))
 }
 
+async fn handle_health() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "status": "ok",
+        "service": "inferenco-mcp",
+        "protocol_version": rmcp::model::ProtocolVersion::LATEST.to_string()
+    }))
+}
+
+fn create_keepalive_stream() -> impl Stream<Item = Result<Event, Infallible>> + Send + 'static {
+    tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(Duration::from_secs(30)))
+        .map(|_| Ok(Event::default().comment("keepalive")))
+}
+
+async fn handle_sse(
+    State(service): State<Arc<ToolService>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>> + Send + 'static> {
+    let service_clone = service.clone();
+
+    // Handle authentication if enabled
+    let auth_enabled =
+        env::var("INFERENCO_MCP_AUTH_ENABLED").unwrap_or_else(|_| "false".to_string()) == "true";
+
+    // Check authentication first
+    if auth_enabled {
+        let api_keys: Vec<String> = env::var("INFERENCO_MCP_API_KEYS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect();
+
+        let is_authorized = if let Some(token) = params.get("token") {
+            api_keys.contains(token)
+        } else {
+            false
+        };
+
+        if !is_authorized {
+            // Return error event
+            let error_event = Event::default()
+                .json_data(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32000,
+                        "message": if params.get("token").is_some() { "Unauthorized" } else { "Authentication required" }
+                    }
+                }))
+                .unwrap();
+            let error_stream = tokio_stream::once(Ok(error_event));
+            let stream = error_stream.chain(create_keepalive_stream());
+            return Sse::new(stream).keep_alive(
+                axum::response::sse::KeepAlive::new()
+                    .interval(Duration::from_secs(15))
+                    .text("keep-alive-text"),
+            );
+        }
+    }
+
+    // Send initial connection event
+    let server_info = service_clone.get_server_info();
+    let init_event = Event::default()
+        .json_data(serde_json::json!({
+            "jsonrpc": "2.0",
+            "result": {
+                "protocolVersion": server_info.protocol_version.to_string(),
+                "capabilities": {
+                    "tools": {}
+                },
+                "serverInfo": {
+                    "name": server_info.server_info.name,
+                    "version": server_info.server_info.version
+                }
+            }
+        }))
+        .unwrap();
+
+    // Create a stream that sends the initial event and then keeps connection alive
+    let init_stream = tokio_stream::once(Ok(init_event));
+    let stream = init_stream.chain(create_keepalive_stream());
+
+    Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive-text"),
+    )
+}
+
+async fn handle_sse_message(
+    State(service): State<Arc<ToolService>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<JsonRpcResponse>, StatusCode> {
+    // SSE messages can also be sent via POST to /sse endpoint
+    // This allows bidirectional communication
+    handle_rpc(State(service), headers, body).await
+}
+
 async fn start_http_server(service: ToolService) -> Result<(), Box<dyn std::error::Error>> {
     let port = env::var("INFERENCO_MCP_PORT")
         .unwrap_or_else(|_| "8080".to_string())
@@ -230,14 +328,17 @@ async fn start_http_server(service: ToolService) -> Result<(), Box<dyn std::erro
 
     let app = Router::new()
         .route("/rpc", post(handle_rpc))
+        .route("/sse", get(handle_sse).post(handle_sse_message))
+        .route("/health", get(handle_health))
+        .route("/", get(handle_health))
         .with_state(service);
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
 
-    tracing::info!(
-        "Inferenco MCP server listening on http://0.0.0.0:{}/rpc",
-        port
-    );
+    tracing::info!("Inferenco MCP server listening on http://0.0.0.0:{}", port);
+    tracing::info!("  - JSON-RPC endpoint: http://0.0.0.0:{}/rpc", port);
+    tracing::info!("  - SSE endpoint: http://0.0.0.0:{}/sse", port);
+    tracing::info!("  - Health endpoint: http://0.0.0.0:{}/health", port);
     tracing::info!(
         "Inferenco MCP server is running with protocol version {}",
         rmcp::model::ProtocolVersion::LATEST
@@ -250,6 +351,8 @@ async fn start_http_server(service: ToolService) -> Result<(), Box<dyn std::erro
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenv().ok();
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),

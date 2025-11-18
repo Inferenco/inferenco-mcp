@@ -20,6 +20,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 rand = "0.8"
-axum = "0.7"
-tower = "0.4"
-tower-http = { version = "0.5", features = ["cors"] }
+axum = "0.8.7"
+tower = "0.5.2"
+tower-http = { version = "0.6.6", features = ["cors"] }
+tokio-stream = "0.1"
+dotenvy = "0.15"
