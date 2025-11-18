@@ -3,6 +3,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    image: inferenco-mcp:latest
     container_name: inferenco-mcp-server
     environment:
       - INFERENCO_MCP_LOG_LEVEL=info
@@ -17,8 +18,6 @@ services:
     volumes:
       # Persist the Sled database for user/group plugin configurations
       - ./data:/app/inferenco_mcp_db
-    stdin_open: true
-    tty: true
     restart: unless-stopped
     healthcheck:
       # Check that the HTTP endpoint responds (no bash/grep required)
