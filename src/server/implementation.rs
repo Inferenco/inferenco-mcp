@@ -3,6 +3,7 @@ use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
         CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+        Tool,
     },
     tool, tool_handler, tool_router, ErrorData as McpError,
 };
@@ -22,6 +23,11 @@ impl ToolService {
             tool_router: Self::tool_router(),
         }
     }
+
+    /// Return the list of tools this service exposes.
+    pub fn available_tools(&self) -> Vec<Tool> {
+        self.tool_router.list_all()
+    }
 }
 
 impl Default for ToolService {
@@ -30,10 +36,10 @@ impl Default for ToolService {
     }
 }
 
-#[tool_router]
+#[tool_router(vis = "pub")]
 impl ToolService {
     #[tool(description = "Echo back the provided message.")]
-    async fn echo(
+    pub async fn echo(
         &self,
         Parameters(args): Parameters<EchoArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -41,7 +47,7 @@ impl ToolService {
     }
 
     #[tool(description = "Increment an in-memory counter and return the new value.")]
-    async fn increment(&self) -> Result<CallToolResult, McpError> {
+    pub async fn increment(&self) -> Result<CallToolResult, McpError> {
         let mut counter = self.counter.lock().await;
         *counter += 1;
         Ok(CallToolResult::success(vec![Content::text(

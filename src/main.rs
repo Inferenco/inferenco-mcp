@@ -1,4 +1,4 @@
-use nova_mcp::server::ToolService;
+use inferenco_mcp::server::ToolService;
 use rmcp::{transport::stdio, ServiceExt};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })?;
 
     tracing::info!(
-        "Nova MCP server is running with protocol version {}",
+        "Inferenco MCP server is running with protocol version {}",
         rmcp::model::ProtocolVersion::V_2024_11_05
     );
     tracing::info!("Available tools: echo, increment");

@@ -1,14 +1,14 @@
 [package]
-name = "nova-mcp"
+name = "inferenco-mcp"
 version = "0.1.0"
 edition = "2021"
-description = "Nova MCP Server - minimal tools using the official Rust SDK"
-authors = ["Nova Team"]
+description = "Inferenco MCP Server - minimal tools using the official Rust SDK"
+authors = ["Inferenco Team"]
 license = "MIT"
-repository = "https://github.com/your-org/nova-mcp"
+repository = "https://github.com/your-org/inferenco-mcp"
 
 [[bin]]
-name = "nova-mcp-stdio"
+name = "inferenco-mcp-stdio"
 path = "src/main.rs"
 
 [dependencies]

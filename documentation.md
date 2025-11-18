@@ -1,266 +1,148 @@
-# Nova-MCP Documentation
+# Inferenco MCP – Extended Documentation
 
-## Overview
+Inferenco MCP is intentionally small so you can understand how an MCP server
+fits together. This document expands on the README and is split into three
+layers: architecture, operations/configuration, and extensibility.
 
-- Purpose: Minimal MCP server exposing GeckoTerminal-powered DEX tools via JSON-RPC for OpenAI Responses’ MCP tool.
-- Transports: `stdio` (default) and `http` JSON-RPC.
-- Auth: Optional API key required for HTTP, disabled for stdio.
-- Extras: Simple plugin registry with enablement per user/group (dev/demo), sled-backed state, basic rate limiting.
+---
 
-## Multi-Tenant Tool Platform Upgrade
+## 1. Architecture Overview
 
-Nova-MCP is evolving from a single-tenant demo into a context-aware, multi-tenant tool platform. The key goals of this upgrade are to let Telegram users and group chats own their own tools, surface only the tools that match the current caller, and maintain backward compatibility with the existing built-in GeckoTerminal tools and legacy plug-in APIs. The sections below capture the requirements and system changes that drive this transformation.
+### 1.1 Components
 
-### 1. Introduction & Scope
+| Component | Description |
+| --- | --- |
+| `ToolService` | Implements the tools and exposes an `rmcp::ServerHandler`. Lives in `src/server`. |
+| `inferenco-mcp-stdio` | Binary entrypoint in `src/main.rs`. Boots tracing, selects transport, and runs the handler. |
+| `rmcp` crate | Provides derive macros (`#[tool]`, `#[tool_router]`, `#[tool_handler]`) plus JSON-RPC glue. |
+| Example client | `examples/test_client.rs` calls the tools directly, no JSON-RPC required. |
+| Docker + scripts | Production-ish wrappers for building/running the server with consistent env vars. |
 
-- Built-in tools remain defined in Rust via `Tool { name, description, input_schema }` and are assembled in `NovaServer::get_tools()`.
-- Users or groups will be able to register their own tools. Registered tools must only be returned to the AI when the requester’s context matches the owning context.
-- A single API key still authenticates HTTP requests. Identity is now derived from new context headers so that the same key can serve multiple tenants.
+### 1.2 Tool Flow
 
-### 2. Current Architecture Snapshot
+1. A client sends `tools/list`. rmcp forwards the request to `ToolService`,
+   which returns `tool_router.list_all()` – a vector describing every tool.
+2. A client calls `tools/call` with `{ name, arguments }`.
+3. rmcp matches the tool name, deserializes arguments into the requested struct,
+   and executes the async Rust method (e.g., `echo` or `increment`).
+4. Results become `CallToolResult` payloads containing text content and
+   optional structured data.
 
-- Built-in tools are hard-coded Rust structs.
-- The existing plug-in registry allows `/plugins/register` followed by `PluginEnableRequest` per user or group (Telegram IDs). Enablement uses sled-backed state.
-- Authentication currently relies on only a global API key. The upgrade must preserve existing behaviour while adding multi-tenant awareness.
+### 1.3 Tool Implementations
 
-### 3. Revised Requirements
+- `echo` expects `EchoArgs { message: String }` and returns that message.
+- `increment` mutates an in-memory counter stored in `Arc<Mutex<u32>>`.
 
-- **Context-aware tools:** Every tool is owned by `(context_type, context_id)` where `context_type ∈ {User, Group}` and `context_id` is the Telegram identifier (negative for groups).
-- **Single API key:** HTTP callers still provide one shared key but must include `x-nova-context-type` and `x-nova-context-id` headers. JSON-RPC over stdio accepts optional `context_type` and `context_id` fields.
-- **Web dashboard:** A browser UI will manage schemas, registrations, updates, and enablement workflows for both individuals and groups.
-- **Backward compatibility:** Built-in tools and the legacy plug-in APIs continue to function.
-- **Security & isolation:** Nova validates request payloads against declared schemas and limits tool invocation to enabled contexts.
+Both tools demonstrate the two handler patterns you will typically need:
+argument extraction via `Parameters<T>` and stateful access via shared structs.
 
-### 4. Data Model Changes
+---
 
-#### 4.1 Tool Definition (Revised)
+## 2. Configuration & Operations
 
-`PluginRegistrationRequest` gains additional metadata so Nova can invoke third-party endpoints while injecting the caller context itself:
+### 2.1 Environment Variables
 
-| Field | Type | Description |
+The binary reads configuration from the process environment. The table below
+mirrors `.env.example` and the Docker compose file.
+
+| Variable | Type | Default | Description |
+| --- | --- | --- | --- |
+| `INFERENCO_MCP_TRANSPORT` | enum | `stdio` | Transport to start (`stdio` or `http`). |
+| `INFERENCO_MCP_PORT` | u16 | `8080` | HTTP port (only used when transport = `http`). |
+| `INFERENCO_MCP_LOG_LEVEL` | string | `info` | log level consumed by `tracing-subscriber`. |
+| `INFERENCO_MCP_AUTH_ENABLED` | bool | `false` | Enables simple API-key auth for HTTP transport. |
+| `INFERENCO_MCP_API_KEYS` | string | _empty_ | Comma-separated list of valid API keys. |
+| `INFERENCO_MCP_AUTH_HEADER` | string | `x-api-key` | HTTP header to read when auth is on. |
+
+> Tip: add `RUST_LOG=debug` when debugging the transport itself. The server
+> already prints the protocol version and tool list on startup.
+
+### 2.2 `.env` Workflow
+
+1. Copy `.env.example` to `.env`.
+2. Update the entries for your local environment (e.g., `INFERENCO_MCP_API_KEYS=devkey123`).
+3. When using `cargo run`, the workspace automatically loads the file through
+   standard dotenv tooling (if installed). Otherwise export the variables in
+   your shell or let Docker compose do it.
+
+### 2.3 TOML Configuration
+
+`config.example.toml` acts as a reference when you prefer file-backed
+configuration (e.g., for container images that do not rely on `.env`). The
+sections map as follows:
+
+| Section | Fields | Purpose |
 | --- | --- | --- |
-| `input_schema` | `serde_json::Value` | JSON schema describing tool arguments. |
-| `output_schema` | `Option<serde_json::Value>` | Optional JSON schema for the returned payload. |
-| `version` | `u32` | Tool definition version. |
-| `endpoint_url` | `String` | HTTPS endpoint Nova will call. Nova includes caller context and arguments in the request body. |
+| `[server]` | `transport`, `port`, `log_level` | Controls the runtime transport and logging defaults. |
+| `[auth]` | `enabled`, `allowed_keys`, `header_name` | Mirrors the environment-based auth settings. |
+| `[apis]` | Optional API keys | Placeholder for future third-party integrations. |
+| `[cache]` | `ttl_seconds`, `max_entries` | Reserved knobs if you add caching layers. |
 
-Historically plug-in authors provided `context_type` and `context_id` during registration. The upgrade removes that requirement—Nova now injects the caller context at runtime. An internal `owner_id` can still represent the third-party account separate from Telegram identifiers.
+The current binary does not read the TOML on its own; the template exists to
+help teams that integrate the crate into larger applications.
 
-#### 4.2 Tool Namespacing
+### 2.4 Deployment Options
 
-Nova derives a fully qualified name (FQN) to avoid collisions across users and groups:
+- **Local dev:** `cargo run --bin inferenco-mcp-stdio`. Recommended when testing
+  stdio responses with OpenAI’s MCP clients.
+- **Docker:** `docker compose -f docker/docker-compose.yml up --build`. Uses the
+  same environment variables and exposes port `8080`.
+- **CI/CD:** `scripts/build.sh` and `scripts/test.sh` provide deterministic
+  entrypoints for pipelines.
 
-```rust
-if context_type == User {
-    format!("user_{}_{}_v{}", context_id, name, version)
-} else {
-    format!("group_{}_{}_v{}", context_id, name, version)
-}
-```
+### 2.5 Observability
 
-The MCP `tools/list` response returns this FQN in `Tool.name`, while descriptions can present user-friendly information.
+- Logging: configured via `tracing-subscriber`. Respect `RUST_LOG` and
+  `INFERENCO_MCP_LOG_LEVEL`.
+- Health: the docker-compose file defines a basic HTTP POST healthcheck against
+  `/rpc` so container orchestrators know when the server is ready.
 
-### 5. API & Protocol Changes
+---
 
-#### 5.1 Context Identification
+## 3. Extending Inferenco MCP
 
-- **Headers:** Every HTTP request must include `x-api-key`, `x-nova-context-type` (`user` or `group`), and `x-nova-context-id` (Telegram ID). Missing or invalid context yields an auth error.
-- **JSON-RPC:** Stdio requests may include `context_type`/`context_id` at the root of the payload.
+### 3.1 Adding Tools
 
-#### 5.2 Tool Registration
+1. **Create DTOs:** add new structs in `src/server/dto.rs`. Derive
+   `serde::Deserialize` and `schemars::JsonSchema`.
+2. **Add handler:** implement an async method inside the `#[tool_router]`
+   impl block (see `src/server/implementation.rs`). Annotate it with
+   `#[tool(description = "...")]`.
+3. **Return values:** use `CallToolResult::success(vec![Content::text(...)])` or
+   `CallToolResult::structured(json!(...))`.
+4. **State management:** store shared state on `ToolService` (e.g., `Arc<Mutex<_>>`)
+   or wire in dependencies during `ToolService::new()`.
 
-- New endpoint `POST /tools/register` accepts the fields from §4.1.
-- The server validates schemas, ensures the context matches the caller, prevents name collisions, persists metadata (including `endpoint_url`), auto-enables the tool for its owner, and returns `{ plugin_id, fq_name, version }`.
-- Updates via `PUT /tools/:plugin_id` bump the version; older versions remain callable for compatibility.
+rmcp auto-updates the tool schema advertised to clients based on the handler
+signature and `Parameters<T>` type.
 
-#### 5.3 Tool Listing
+### 3.2 Switching Transports
 
-- `tools/list` extracts the caller context, loads built-in tools, queries plug-ins matching `(context_type, context_id)`, and returns the combined list with FQNs.
+The binary currently ships with stdio enabled; HTTP requires you to introduce an
+HTTP transport and wire it into `ServiceExt::serve`. If you embed this crate
+into a larger application, you can reuse `ToolService` and supply your own
+transport layer.
 
-#### 5.4 Tool Invocation
+### 3.3 Integrating with Other Systems
 
-1. Parse the tool name. Built-ins continue to dispatch via existing handlers.
-2. For plug-ins, parse the FQN back into `(context_type, context_id, base_name, version)`.
-3. Ensure the caller context matches and the tool is enabled via `PluginEnableRequest` rules.
-4. Validate arguments against `input_schema`.
-5. Invoke `endpoint_url` with a `PluginInvocationRequest` containing context and arguments.
-6. Optionally validate responses against `output_schema`.
+Because the tools are plain async functions, nothing prevents you from calling
+databases, REST APIs, or third-party SDKs. Keep these guidelines in mind:
 
-#### 5.5 Legacy Plug-in Endpoints
+- Avoid long blocking tasks; stay async.
+- Perform validation in the DTOs or handler logic.
+- Consider returning structured content for machine-readable results.
 
-Existing `/plugins/*` routes remain for internal administration but `/tools/*` will be the primary surface for multi-tenant scenarios.
+---
 
-### 6. Server Implementation Changes
+## 4. Troubleshooting & FAQ
 
-- **Auth middleware (`auth.rs`):** Require the new headers, validate context types, ensure IDs are numeric (negative for groups), and store the resolved context in request scope.
-- **Plug-in manager:** Extend `PluginMetadata` with context ownership, schemas, versioning, and `endpoint_url`. Add helpers such as `list_plugins_for_context` and `get_plugin_by_fq_name`, and automatically enable the owning context on registration.
-- **MCP handlers:** `NovaServer::get_tools()` now receives context, merges built-in and context-specific tools, and `handle_tool_call()` parses FQNs, enforces context checks, and routes to plug-in invocation logic with clear error messages.
+| Symptom | Likely Cause | Fix |
+| --- | --- | --- |
+| `cargo run` prints nothing | Log level is filtering everything | Set `RUST_LOG=info` or `INFERENCO_MCP_LOG_LEVEL=info`. |
+| HTTP requests hang | HTTP transport not enabled | Export `INFERENCO_MCP_TRANSPORT=http` and restart. |
+| Unauthorized errors over HTTP | Auth enabled but no header | Supply `INFERENCO_MCP_AUTH_HEADER` with one of the comma-separated keys. |
+| Example client panics | Tool signatures changed | Rebuild and ensure `available_tools()` returns the new tool metadata. |
 
-### 7. Web Dashboard
-
-- **Authentication:** UI collects the API key and context (user or group) and sends them with every request. Users can switch contexts from the dashboard.
-- **Tool creation workflow:** Select context, define tool metadata, build schemas with validation, provide an HTTPS `endpoint_url`, register via `/tools/register`, and optionally enable the tool for other contexts. Successful registration displays the FQN.
-- **Tool management:** Show tools for the active context (base name, version, status, created at). Allow enable/disable, cross-context enablement, edits (create new versions), deletion, and optional invocation logs.
-- **Implementation notes:** React SPA or standalone app backed by Nova API, environment-configurable base URLs, JSON editors for advanced schema editing, and version bumping when editing.
-
-### 8. Security & Governance
-
-- **Rate limiting:** Enforce per-context sliding window limits for registrations and invocations since all clients share one API key.
-- **Schema sanitisation:** Accept only valid, recognised JSON Schema keywords to avoid expensive validation or malicious payloads.
-- **Ownership enforcement:** Only the owner context may update/delete tools; group admin policies can extend permissions.
-- **Audit logs:** Track registration, edits, enablement, timestamps, context IDs, and IPs with admin visibility.
-- **Future extensibility:** Preserve the user/group distinction but leave room for additional context types (e.g., organisations).
-
-## Architecture
-
-```
-src/
-├── main.rs                 # Entrypoint; selects transport (stdio/http)
-├── server.rs               # Server object; tool registry; PluginManager wiring
-├── mcp/
-│   ├── dto.rs              # JSON-RPC types for MCP
-│   └── handler.rs          # Implements initialize, tools/list, tools/call, ping
-├── http.rs                 # HTTP transport (/rpc + /plugins/* + health)
-├── auth.rs                 # API key header validation
-├── config.rs               # Env/TOML-driven config (serde defaulted)
-├── plugins/
-│   ├── dto.rs              # Plugin metadata + enablement records
-│   ├── handler.rs          # REST handlers (register/update/list/invoke/enable)
-│   ├── helpers.rs          # Auth + rate limiting integration for plugins
-│   └── manager.rs          # In-memory registry + sled-backed enablement
-└── tools/
-    ├── mod.rs              # Public re-exports for tools
-    └── gecko_terminal/
-        ├── helpers.rs
-        ├── implementation.rs   # Shared reqwest client + base URL
-        ├── networks/           # get_gecko_networks
-        │   ├── dto.rs
-        │   └── handler.rs
-        ├── token/              # get_gecko_token
-        │   ├── dto.rs
-        │   └── handler.rs
-        ├── pool/               # get_gecko_pool
-        │   ├── dto.rs
-        │   └── handler.rs
-        ├── trending_pools/     # get_trending_pools
-        │   ├── dto.rs
-        │   ├── handler.rs
-        │   └── implementation.rs
-        ├── search_pools/       # search_pools
-        │   ├── dto.rs
-        │   ├── handler.rs
-        │   └── implementation.rs
-        └── new_pools/          # get_new_pools
-            ├── dto.rs
-            ├── handler.rs
-            └── implementation.rs
-```
-
-## Tools
-
-- get_gecko_networks: Lists available networks.
-- get_gecko_token: Returns token info on a network/address.
-- get_gecko_pool: Returns pool info on a network/address.
-- get_trending_pools: Lists trending pools with pagination and duration.
-- search_pools: Searches pools by query, optional network.
-- get_new_pools: Lists newest pools with pagination.
-
-Schemas are defined in `src/server.rs:get_tools()` and inputs/outputs live in the module `dto.rs` files.
-
-## MCP JSON-RPC
-
-- initialize: Returns protocol version and server info.
-- tools/list: Returns tools with name/description/input_schema.
-- tools/call: Executes the tool by name and `arguments` object.
-
-Example request/response for tools/list:
-
-```
-{"jsonrpc":"2.0","id":1,"method":"tools/list"}
-```
-
-```
-{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"get_gecko_networks", ...}]}}
-```
-
-## HTTP Transport
-
-- Endpoint: `POST /rpc` with JSON body as `McpRequest`.
-- Auth: Header name defaults to `x-api-key` when enabled. Configure header/key(s) via env.
-- Health: `GET /healthz` and `GET /readyz`.
-- Rate limit: Simple per-key counter with a minute bucket and TTL cleanup.
-
-## Plugin Registry (Dev)
-
-- Register: `POST /plugins/register` -> `PluginMetadata`.
-- Update: `PUT /plugins/:plugin_id` -> `PluginMetadata`.
-- Unregister: `DELETE /plugins/:plugin_id`.
-- List: `GET /plugins` -> `PluginMetadata[]`.
-- Enablement: `POST /plugins/enable` -> `PluginEnablementStatus` for user or group.
-- Invoke: `POST /plugins/:plugin_id/call` with context and arguments.
-
-Enablement is stored in sled (`user_plugins`, `group_plugins` trees). This is a demonstration scaffold; swap out for your production policy store.
-
-## Configuration
-
-Environment variables:
-
-```
-# Server
-NOVA_MCP_TRANSPORT=stdio|http
-NOVA_MCP_PORT=8080
-NOVA_MCP_LOG_LEVEL=info
-
-# HTTP auth
-NOVA_MCP_AUTH_ENABLED=true|false
-NOVA_MCP_API_KEYS="key1,key2"
-NOVA_MCP_AUTH_HEADER=x-api-key
-
-# External APIs
-GECKO_TERMINAL_BASE_URL=https://api.geckoterminal.com/api/v2
-UNISWAP_API_KEY=...
-COINGECKO_API_KEY=...
-DEXSCREENER_API_KEY=...
-
-# Limits/cache
-# (rate_limit_per_minute, ttl_seconds, etc., when using config file)
-```
-
-TOML config (`config.toml`) mirrors `NovaConfig` (see README for example). You can load from file using `NovaConfig::from_file(path)` or rely on `from_env()`.
-
-## Running
-
-- Stdio: `cargo run --bin nova-mcp-stdio`
-- HTTP: set `NOVA_MCP_TRANSPORT=http` and `NOVA_MCP_PORT`, then run the same command.
-- Docker: see README for full Compose and CLI examples.
-
-## Testing
-
-- Unit/integration: `cargo test`
-- Live API tests (ignored): `cargo test -- --ignored`
-
-## Adding a Tool
-
-1. Create a `your_tool/` directory under `src/tools/gecko_terminal/` with `dto.rs`, `handler.rs`, and optional `implementation.rs`.
-2. Re-export it in `src/tools/gecko_terminal/mod.rs` (and in `src/tools/mod.rs` if you want top-level re-exports).
-3. Register the tool schema in `src/server.rs:get_tools()`.
-4. Add a `match` branch in `src/mcp/handler.rs:handle_tool_call()` for the tool name.
-5. Add tests under `tests/` and, optionally, live tests under `tests/` with `#[ignore]`.
-
-## Error Handling
-
-- Internal errors are surfaced as `McpError` with code `-32603` in JSON-RPC and appropriate HTTP codes in the HTTP transport and plugin routes.
-- Common validation errors return concise messages (e.g., missing required params).
-
-## Security Notes
-
-- HTTP auth uses raw API keys for demo; consider a proper identity layer with hashed secrets and scoped tokens in production.
-- Rate limiting is in-memory per-process; use a shared limiter (Redis) for multi-instance deployments.
-- Sled storage is local; replace with a managed DB for production needs.
-
-## Troubleshooting
-
-- “Unauthorized” on HTTP: Make sure `NOVA_MCP_AUTH_ENABLED=true` and include the header (`x-api-key: your_key`).
-- Rate limit exceeded: Increase `rate_limit_per_minute` or reduce request frequency.
-- Live API flakiness: GeckoTerminal is public; expect occasional rate limits or transient errors; retry or add caching if needed.
-
+If you encounter something not covered here, open an issue or inspect the
+trace-level logs – rmcp surfaces most protocol errors clearly once you enable
+`RUST_LOG=debug`.

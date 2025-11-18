@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Nova-MCP Build Script
+# Inferenco-MCP Build Script
 
 set -e
 
-echo "Building Nova-MCP Server..."
+echo "Building Inferenco-MCP Server..."
 echo "=========================="
 
 # Check if Rust is installed
@@ -16,26 +16,25 @@ fi
 
 # Build the project
 echo "Building release binary..."
-cargo build --release --bin nova-mcp-stdio
+cargo build --release --bin inferenco-mcp-stdio
 
 # Check if build was successful
-if [ -f "target/release/nova-mcp-stdio" ]; then
+if [ -f "target/release/inferenco-mcp-stdio" ]; then
     echo "✅ Build successful!"
-    echo "Binary location: target/release/nova-mcp-stdio"
+    echo "Binary location: target/release/inferenco-mcp-stdio"
     
     # Show binary info
     echo ""
     echo "Binary information:"
-    ls -lh target/release/nova-mcp-stdio
+    ls -lh target/release/inferenco-mcp-stdio
     
     echo ""
     echo "To run the server:"
-    echo "  ./target/release/nova-mcp-stdio"
+    echo "  ./target/release/inferenco-mcp-stdio"
     echo ""
     echo "Or use cargo:"
-    echo "  cargo run --bin nova-mcp-stdio"
+    echo "  cargo run --bin inferenco-mcp-stdio"
 else
     echo "❌ Build failed!"
     exit 1
 fi
-
