@@ -2,15 +2,17 @@
 
 A tiny-but-complete Model Context Protocol (MCP) server powered by the official
 [rmcp](https://github.com/modelcontextprotocol/rust-sdk) crate. Inferenco MCP
-focuses on being the simplest possible reference implementation: it exposes two
-tools (`echo` and `increment`), runs happily over stdio or HTTP, and ships with
-ready-to-run Docker and shell scripts.
+focuses on being the simplest possible reference implementation: it exposes a
+handful of fun demo tools (echo, reverse text, dice roll, UTC clock, and a
+stateful counter), runs happily over stdio or HTTP, and ships with ready-to-run
+Docker and shell scripts.
 
 ---
 
 ## Feature Highlights
 
-- :sparkles: **Two tools out of the box** – an echo and a stateful counter
+- :sparkles: **Five demo tools out of the box** – echo, reverse text, dice roll,
+  UTC clock, and a stateful counter
 - :electric_plug: **Rust async (Tokio) runtime** with rmcp’s derive macros
 - :gear: **Multiple transports** – stdio by default, HTTP ready through env vars
 - :card_file_box: **Deterministic configuration** via environment variables or a
@@ -59,8 +61,8 @@ required by OpenAI’s MCP tool interface.
 cargo run --example test_client
 ```
 
-The example lists every tool and invokes both `echo` and `increment` using the
-public `ToolService` API.
+The example lists every tool and invokes some of them (`echo`, `increment`, etc.)
+using the public `ToolService` API.
 
 ---
 

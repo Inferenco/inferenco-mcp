@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Inferenco MCP server is running with protocol version {}",
         rmcp::model::ProtocolVersion::LATEST
     );
-    tracing::info!("Available tools: echo, increment");
+    tracing::info!("Available tools: echo, reverse_text, increment, current_time, roll_dice");
 
     service.waiting().await?;
     Ok(())
