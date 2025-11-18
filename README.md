@@ -92,6 +92,228 @@ the env vars first and uses the TOML file as a fallback.
 
 ---
 
+## Integrating with the Responses API
+
+When running in HTTP mode, Inferenco MCP exposes a JSON-RPC 2.0 endpoint that can be integrated with external services or used as a standalone API.
+
+### Setup
+
+1. **Enable HTTP transport:**
+
+```bash
+export INFERENCO_MCP_TRANSPORT=http
+export INFERENCO_MCP_PORT=8080
+```
+
+Or add to your `.env` file:
+```bash
+INFERENCO_MCP_TRANSPORT=http
+INFERENCO_MCP_PORT=8080
+```
+
+2. **Start the server:**
+
+```bash
+cargo run --bin inferenco-mcp-stdio
+```
+
+The server will listen on `http://localhost:8080` (or your configured port).
+
+### API Endpoint
+
+The MCP server exposes a single JSON-RPC endpoint:
+
+- **URL:** `http://localhost:8080/rpc`
+- **Method:** `POST`
+- **Content-Type:** `application/json`
+
+### Authentication (Optional)
+
+If you've enabled authentication:
+
+```bash
+export INFERENCO_MCP_AUTH_ENABLED=true
+export INFERENCO_MCP_API_KEYS=your-api-key-1,your-api-key-2
+export INFERENCO_MCP_AUTH_HEADER=x-api-key
+```
+
+Include the API key in your requests:
+
+```bash
+curl -X POST http://localhost:8080/rpc \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: your-api-key-1" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+### Making Requests
+
+#### List Available Tools
+
+```bash
+curl -X POST http://localhost:8080/rpc \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/list"
+  }'
+```
+
+#### Call a Tool
+
+```bash
+curl -X POST http://localhost:8080/rpc \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/call",
+    "params": {
+      "name": "echo",
+      "arguments": {
+        "message": "Hello, MCP!"
+      }
+    }
+  }'
+```
+
+#### Example: Increment Counter
+
+```bash
+curl -X POST http://localhost:8080/rpc \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": "increment",
+      "arguments": {}
+    }
+  }'
+```
+
+### Response Format
+
+All responses follow the JSON-RPC 2.0 specification:
+
+**Success Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Hello, MCP!"
+      }
+    ]
+  }
+}
+```
+
+**Error Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32602,
+    "message": "Invalid params"
+  }
+}
+```
+
+### Integration Examples
+
+#### Python
+
+```python
+import requests
+
+url = "http://localhost:8080/rpc"
+headers = {
+    "Content-Type": "application/json",
+    # "x-api-key": "your-api-key"  # If auth is enabled
+}
+
+# List tools
+response = requests.post(url, json={
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/list"
+}, headers=headers)
+print(response.json())
+
+# Call a tool
+response = requests.post(url, json={
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/call",
+    "params": {
+        "name": "echo",
+        "arguments": {"message": "Hello from Python!"}
+    }
+}, headers=headers)
+print(response.json())
+```
+
+#### JavaScript/Node.js
+
+```javascript
+const fetch = require('node-fetch');
+
+const url = 'http://localhost:8080/rpc';
+const headers = {
+  'Content-Type': 'application/json',
+  // 'x-api-key': 'your-api-key'  // If auth is enabled
+};
+
+// List tools
+fetch(url, {
+  method: 'POST',
+  headers,
+  body: JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/list'
+  })
+})
+  .then(res => res.json())
+  .then(data => console.log(data));
+
+// Call a tool
+fetch(url, {
+  method: 'POST',
+  headers,
+  body: JSON.stringify({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'echo',
+      arguments: { message: 'Hello from JavaScript!' }
+    }
+  })
+})
+  .then(res => res.json())
+  .then(data => console.log(data));
+```
+
+### Docker Integration
+
+When running via Docker Compose, the server is automatically configured for HTTP:
+
+```bash
+docker compose -f docker/docker-compose.yml up --build
+```
+
+The server will be available at `http://localhost:8080/rpc` (or your configured port).
+
+---
+
 ## Running via Docker
 
 ```bash
