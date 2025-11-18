@@ -1,12 +1,10 @@
 use crate::server::EchoArgs;
 use rmcp::{
-    handler::server::{
-        router::tool::ToolRouter,
-        wrapper::Parameters,
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    model::{
+        CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
     },
-    model::{CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
-    tool, tool_handler, tool_router,
-    ErrorData as McpError,
+    tool, tool_handler, tool_router, ErrorData as McpError,
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -17,7 +15,6 @@ pub struct ToolService {
     tool_router: ToolRouter<Self>,
 }
 
-#[tool_router]
 impl ToolService {
     pub fn new() -> Self {
         Self {
@@ -25,9 +22,21 @@ impl ToolService {
             tool_router: Self::tool_router(),
         }
     }
+}
 
+impl Default for ToolService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[tool_router]
+impl ToolService {
     #[tool(description = "Echo back the provided message.")]
-    async fn echo(&self, Parameters(args): Parameters<EchoArgs>) -> Result<CallToolResult, McpError> {
+    async fn echo(
+        &self,
+        Parameters(args): Parameters<EchoArgs>,
+    ) -> Result<CallToolResult, McpError> {
         Ok(CallToolResult::success(vec![Content::text(args.message)]))
     }
 
@@ -35,7 +44,9 @@ impl ToolService {
     async fn increment(&self) -> Result<CallToolResult, McpError> {
         let mut counter = self.counter.lock().await;
         *counter += 1;
-        Ok(CallToolResult::success(vec![Content::text(counter.to_string())]))
+        Ok(CallToolResult::success(vec![Content::text(
+            counter.to_string(),
+        )]))
     }
 }
 
@@ -47,8 +58,7 @@ impl rmcp::ServerHandler for ToolService {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation::from_build_env(),
             instructions: Some(
-                "A minimal MCP tool server built with the official Rust SDK. "
-                    .to_string()
+                "A minimal MCP tool server built with the official Rust SDK. ".to_string()
                     + "Provides echo and counter tools without any API key requirements.",
             ),
         }
