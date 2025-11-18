@@ -1,13 +1,20 @@
 # Build
 target/
+**/*.rs.bk
+*.pdb
 
 # IDE/editor
 .idea/
 .vscode/
 *.iml
+*.code-workspace
 
 # OS
 .DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
 
 # Logs
 *.log
@@ -15,13 +22,14 @@ target/
 # Env
 .env
 .env.*
+!*.env.example
 
 # Database
 docker/data/
-nova_mcp_db/
+inferenco_mcp_db/
 
 # Misc
 coverage/
-*.swp
-*.swo
+*.orig
+.cargo/
 
