@@ -2,7 +2,7 @@ use crate::server::{DiceArgs, EchoArgs, ReverseArgs};
 use chrono::Utc;
 use rand::Rng;
 use rmcp::{
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
+    handler::server::{router::tool::ToolRouter, wrapper::Parameters, ServerHandler},
     model::{
         CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
         Tool,
@@ -29,6 +29,40 @@ impl ToolService {
     /// Return the list of tools this service exposes.
     pub fn available_tools(&self) -> Vec<Tool> {
         self.tool_router.list_all()
+    }
+
+    /// Get server info for initialization.
+    pub fn get_server_info(&self) -> ServerInfo {
+        self.get_info()
+    }
+
+    /// Call a tool by name with the provided arguments.
+    pub async fn call_tool(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<CallToolResult, McpError> {
+        match name {
+            "echo" => {
+                let args: EchoArgs = serde_json::from_value(arguments)
+                    .map_err(|_| McpError::invalid_params("Invalid echo arguments", None))?;
+                self.echo(Parameters(args)).await
+            }
+            "reverse_text" => {
+                let args: ReverseArgs = serde_json::from_value(arguments).map_err(|_| {
+                    McpError::invalid_params("Invalid reverse_text arguments", None)
+                })?;
+                self.reverse_text(Parameters(args)).await
+            }
+            "increment" => self.increment().await,
+            "current_time" => self.current_time().await,
+            "roll_dice" => {
+                let args: DiceArgs = serde_json::from_value(arguments)
+                    .map_err(|_| McpError::invalid_params("Invalid roll_dice arguments", None))?;
+                self.roll_dice(Parameters(args)).await
+            }
+            _ => Err(McpError::invalid_params("Tool not found", None)),
+        }
     }
 }
 
