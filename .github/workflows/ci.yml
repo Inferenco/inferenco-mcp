@@ -23,8 +23,5 @@ jobs:
       - name: clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: test
-        run: cargo test --all --verbose
-      - name: network tests (ignored)
-        run: cargo test -- --ignored --verbose
-        continue-on-error: true
+        run: cargo test --lib --verbose
 

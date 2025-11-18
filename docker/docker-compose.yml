@@ -1,13 +1,13 @@
 services:
-  nova-mcp:
+  inferenco-mcp:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    container_name: nova-mcp-server
+    container_name: inferenco-mcp-server
     environment:
-      - NOVA_MCP_LOG_LEVEL=info
-      - NOVA_MCP_TRANSPORT=http
-      - NOVA_MCP_PORT=8080
+      - INFERENCO_MCP_LOG_LEVEL=info
+      - INFERENCO_MCP_TRANSPORT=http
+      - INFERENCO_MCP_PORT=8080
       # Add API keys as needed
       # - UNISWAP_API_KEY=${UNISWAP_API_KEY}
       # - COINGECKO_API_KEY=${COINGECKO_API_KEY}
@@ -16,7 +16,7 @@ services:
       - "8080:8080"
     volumes:
       # Persist the Sled database for user/group plugin configurations
-      - ./data:/app/nova_mcp_db
+      - ./data:/app/inferenco_mcp_db
     stdin_open: true
     tty: true
     restart: unless-stopped
