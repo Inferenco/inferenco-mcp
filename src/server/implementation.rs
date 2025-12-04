@@ -1,4 +1,4 @@
-use crate::server::{DiceArgs, EchoArgs, ReverseArgs};
+use crate::server::{CedraDocsArgs, DiceArgs, EchoArgs, ReverseArgs};
 use chrono::Utc;
 use rand::Rng;
 use rmcp::{
@@ -9,12 +9,17 @@ use rmcp::{
     },
     tool, tool_handler, tool_router, ErrorData as McpError,
 };
+use scraper::{Html, Selector};
+use reqwest::Url;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+const CEDRA_DOCS_BASE_URL: &str = "https://docs.cedra.network";
 
 #[derive(Clone)]
 pub struct ToolService {
     counter: Arc<Mutex<u32>>,
+    http_client: reqwest::Client,
     tool_router: ToolRouter<Self>,
 }
 
@@ -22,6 +27,7 @@ impl ToolService {
     pub fn new() -> Self {
         Self {
             counter: Arc::new(Mutex::new(0)),
+            http_client: reqwest::Client::new(),
             tool_router: Self::tool_router(),
         }
     }
@@ -61,8 +67,76 @@ impl ToolService {
                     .map_err(|_| McpError::invalid_params("Invalid roll_dice arguments", None))?;
                 self.roll_dice(Parameters(args)).await
             }
+            "read_cedra_docs" => {
+                let args: CedraDocsArgs = serde_json::from_value(arguments).map_err(|_| {
+                    McpError::invalid_params("Invalid read_cedra_docs arguments", None)
+                })?;
+                self.read_cedra_docs(Parameters(args)).await
+            }
             _ => Err(McpError::invalid_params("Tool not found", None)),
         }
+    }
+
+    fn build_docs_url(&self, path: &str) -> Result<Url, McpError> {
+        let trimmed = path.trim();
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            return Err(McpError::invalid_params(
+                "Path must be relative to docs.cedra.network",
+                None,
+            ));
+        }
+
+        let mut url = Url::parse(CEDRA_DOCS_BASE_URL)
+            .map_err(|_| McpError::internal_error("Failed to parse docs base URL", None))?;
+
+        let cleaned_path = trimmed.trim_start_matches('/');
+        url.set_path(cleaned_path);
+
+        Ok(url)
+    }
+
+    fn extract_text_from_html(html: &str) -> String {
+        let document = Html::parse_document(html);
+        let selectors = ["main", "article", "body"];
+        let mut content = String::new();
+
+        for query in selectors {
+            if let Ok(selector) = Selector::parse(query) {
+                for element in document.select(&selector) {
+                    for text in element.text() {
+                        content.push_str(text);
+                        content.push(' ');
+                    }
+                }
+            }
+
+            if !content.is_empty() {
+                break;
+            }
+        }
+
+        if content.is_empty() {
+            content = document
+                .root_element()
+                .text()
+                .collect::<Vec<_>>()
+                .join(" ");
+        }
+
+        content.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    fn summarize_text(text: &str, max_length: usize) -> String {
+        if text.len() <= max_length {
+            return text.to_string();
+        }
+
+        let mut truncated = text
+            .chars()
+            .take(max_length.saturating_sub(3))
+            .collect::<String>();
+        truncated.push_str("...");
+        truncated
     }
 }
 
@@ -120,6 +194,44 @@ impl ToolService {
             "Rolled {value} on a d{sides}"
         ))]))
     }
+
+    #[tool(description = "Read Cedra developer docs and return the main content for a given path.")]
+    pub async fn read_cedra_docs(
+        &self,
+        Parameters(args): Parameters<CedraDocsArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let url = self.build_docs_url(&args.path)?;
+
+        let response = self
+            .http_client
+            .get(url.clone())
+            .send()
+            .await
+            .map_err(|error| {
+                McpError::internal_error(
+                    format!("Failed to fetch Cedra docs: {error}"),
+                    None,
+                )
+            })?;
+
+        if !response.status().is_success() {
+            return Err(McpError::internal_error(
+                format!("Cedra docs returned status {}", response.status()),
+                None,
+            ));
+        }
+
+        let html = response
+            .text()
+            .await
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+        let extracted = Self::extract_text_from_html(&html);
+        let summary = Self::summarize_text(&extracted, 1200);
+
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Source: {url}\n\n{summary}"
+        ))]))
+    }
 }
 
 #[tool_handler]
@@ -131,8 +243,8 @@ impl rmcp::ServerHandler for ToolService {
             server_info: Implementation::from_build_env(),
             instructions: Some(
                 "A minimal MCP tool server built with the official Rust SDK. ".to_string()
-                    + "Provides echo, text transformation, dice roll, clock, and counter tools "
-                    + "without any API key requirements.",
+                    + "Provides echo, text transformation, dice roll, clock, Cedra docs reader, "
+                    + "and counter tools without any API key requirements.",
             ),
         }
     }
@@ -230,5 +342,31 @@ mod tests {
             .and_then(|suffix| suffix.trim_start_matches('d').parse().ok())
             .expect("output should contain die size");
         assert_eq!(reported_sides, 2);
+    }
+
+    #[test]
+    fn build_docs_url_rejects_absolute_urls() {
+        let service = ToolService::new();
+        let result = service.build_docs_url("https://example.com/page");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_docs_url_accepts_relative_paths() {
+        let service = ToolService::new();
+        let url = service
+            .build_docs_url("guides/quickstart")
+            .expect("relative path should be accepted");
+
+        assert_eq!(url.as_str(), "https://docs.cedra.network/guides/quickstart");
+    }
+
+    #[test]
+    fn summarize_text_truncates_long_strings() {
+        let long_text = "abc".repeat(500);
+        let summarized = ToolService::summarize_text(&long_text, 50);
+
+        assert!(summarized.len() <= 50);
+        assert!(summarized.ends_with("..."));
     }
 }
