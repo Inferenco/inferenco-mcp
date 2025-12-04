@@ -21,3 +21,9 @@ impl DiceArgs {
         6
     }
 }
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CedraDocsArgs {
+    #[serde(default)]
+    pub path: String,
+}
